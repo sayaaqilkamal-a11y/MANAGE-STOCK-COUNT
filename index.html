@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Count</title>
+<style>
+body {font-family:Arial,sans-serif;margin:0;padding:0;background:linear-gradient(120deg,#fff3e0,#ffb74d);transition:background 0.8s;}
+header {background:#ff6f00;color:white;padding:20px;text-align:center;font-size:26px;font-weight:bold;box-shadow:0 2px 5px rgba(0,0,0,0.2);}
+.container{padding:20px;max-width:1000px;margin:auto;}
+input,button{margin:5px 0;padding:8px;border-radius:6px;border:1px solid #ff6f00;font-size:14px;}
+button{cursor:pointer;background:#ff6f00;color:white;transition:0.3s;}
+button:hover{background:#e65100;transform:scale(1.05);}
+table{width:100%;border-collapse: collapse;margin-top:10px;}
+table,th,td{border:1px solid #ff8f00;}
+th,td{padding:10px;text-align:center;}
+th{background:#ffd180;}
+td{background:rgba(255,255,255,0.8);}
+td:hover{background:rgba(255,235,205,0.8);}
+#app-logo{height: 180px;display:block;margin-bottom:15px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.2);}
+.hidden-file{display:none;}
+.sort-btn{margin-left:5px;padding:6px 12px;font-size:12px;border-radius:6px;}
+.status{margin-top:5px;color:green;font-weight:bold;}
+.num-input{width:60px;}
+.edit-btn, .delete-btn{padding:4px 8px;font-size:12px;margin-left:2px;}
+</style>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+<header>Stock Count</header>
+
+<div id="auth-section" class="container">
+<h2>Sign in/ Sign up</h2>
+<input type="email" id="email" placeholder="Email">
+<input type="password" id="password" placeholder="Password">
+<input type="text" id="admin-code" placeholder="Admin Code(optional)">
+<button id="signup">Sign up</button>
+<button id="login">Sign in</button>
+<div id="auth-status" class="status"></div>
+</div>
+
+<div id="app-section" class="container" style="display:none;">
+<img id="app-logo" src="" alt="Logo">
+<button id="logout">Logout</button>
+
+<div style="margin-top:10px;">
+<input type="text" id="search" placeholder="Searching...">
+<button class="sort-btn" id="sort-asc">A-Z</button>
+<button class="sort-btn" id="sort-desc">Z-A</button>
+<button id="add-item-btn">Add</button>
+</div>
+
+<table>
+<thead>
+<tr>
+<th>No</th>
+<th>Name</th>
+<th>Initial stock</th>
+<th>Stock Incoming</th>
+<th>Stock Out</th>
+<th>Stock Results</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody id="items-table"></tbody>
+</table>
+
+<div id="admin-controls" style="margin-top:20px; display:none;">
+<button id="import-btn">Import Excel/CSV</button>
+<button id="export-btn">Export Excel</button>
+<button id="delete-all-btn">Delete All Items?</button>
+<button id="delete-account">Delete Account</button>
+</div>
+
+<input type="file" id="file-logo" class="hidden-file" accept="image/*">
+
+<script>
+const firebaseConfig={
+apiKey:"AIzaSyARuZ3pieoSBSp0vcMP8aTnIdWkvbu3XTE",
+authDomain:"stockcounttt.firebaseapp.com",
+databaseURL:"https://stockcounttt-default-rtdb.asia-southeast1.firebasedatabase.app",
+projectId:"stockcounttt",
+storageBucket:"stockcounttt.firebasestorage.app",
+messagingSenderId:"1009121063519",
+appId:"1:1009121063519:web:bef425fc4de426bb8e61ea",
+measurementId:"G-KBBWQWTWVN"
+};
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth();
+const db=firebase.database();
+
+const authSection=document.getElementById('auth-section');
+const appSection=document.getElementById('app-section');
+const emailInput=document.getElementById('email');
+const passwordInput=document.getElementById('password');
+const adminCodeInput=document.getElementById('admin-code');
+const signupBtn=document.getElementById('signup');
+const loginBtn=document.getElementById('login');
+const logoutBtn=document.getElementById('logout');
+const deleteAccountBtn=document.getElementById('delete-account');
+const itemsTable=document.getElementById('items-table');
+const searchInput=document.getElementById('search');
+const sortAscBtn=document.getElementById('sort-asc');
+const sortDescBtn=document.getElementById('sort-desc');
+const addItemBtn=document.getElementById('add-item-btn');
+const adminControls=document.getElementById('admin-controls');
+const exportBtn=document.getElementById('export-btn');
+const deleteAllBtn=document.getElementById('delete-all-btn');
+const importBtn=document.getElementById('import-btn');
+const fileLogo=document.getElementById('file-logo');
+const appLogo=document.getElementById('app-logo');
+const authStatus=document.getElementById('auth-status');
+
+let currentUserRole='user';
+let itemsData=[];
+
+// --- CEK LOGIN OTOMATIS SAAT REFRESH ---
+auth.onAuthStateChanged(user => {
+  if(user){
+    db.ref('users/' + user.uid + '/role').once('value', snap => {
+      currentUserRole = snap.val();
+      showApp();
+    });
+  }else{
+    authSection.style.display='block';
+    appSection.style.display='none';
+  }
+});
+
+// --- SIGNUP ---
+signupBtn.addEventListener('click',()=>{
+  const email=emailInput.value.trim();
+  const pass=passwordInput.value;
+  const code=adminCodeInput.value.trim();
+  const role=(code==='ADMIN123')?'admin':'user';
+  auth.createUserWithEmailAndPassword(email,pass)
+  .then(cred=>{
+    db.ref('users/'+cred.user.uid).set({email,role});
+    authStatus.textContent='Daftar berhasil! Silakan login';
+  }).catch(err=>authStatus.textContent=err.message);
+});
+
+// --- LOGIN ---
+loginBtn.addEventListener('click',()=>{
+  const email=emailInput.value.trim();
+  const pass=passwordInput.value;
+  auth.signInWithEmailAndPassword(email,pass)
+  .then(cred=>{
+    db.ref('users/'+cred.user.uid+'/role').once('value',snap=>{
+      currentUserRole=snap.val(); showApp();
+    });
+  }).catch(err=>authStatus.textContent=err.message);
+});
+
+// --- LOGOUT ---
+logoutBtn.addEventListener('click',()=>{auth.signOut().then(()=>location.reload());});
+
+// --- DELETE ACCOUNT ---
+deleteAccountBtn.addEventListener('click',()=>{
+  const user=auth.currentUser;
+  if(user && confirm('Sure you wanna delete this account?')){
+    db.ref('users/'+user.uid).remove();
+    user.delete().then(()=>location.reload());
+  }
+});
+
+// --- SHOW APP ---
+function showApp(){
+  authSection.style.display='none';
+  appSection.style.display='block';
+  if(currentUserRole==='admin') adminControls.style.display='block';
+  loadItems();
+  setupAdminLogo();
+}
+
+// --- LOAD ITEMS ---
+function loadItems(){
+  db.ref('items').on('value',snap=>{
+    itemsData=[];
+    snap.forEach(child=>{
+      itemsData.push({...child.val(), key: child.key});
+    });
+    renderItems();
+  });
+}
+
+// --- RENDER ITEMS ---
+function renderItems(){
+  let filtered=itemsData.filter(i=>i.name.toLowerCase().includes(searchInput.value.toLowerCase()));
+  itemsTable.innerHTML='';
+  filtered.forEach((item,index)=>{
+    const tr=document.createElement('tr'); tr.classList.add('animate');
+
+    const tdNo=document.createElement('td'); tdNo.textContent=index+1;
+    const tdName=document.createElement('td'); tdName.textContent=item.name;
+    const tdStock=document.createElement('td'); tdStock.textContent=item.stock;
+
+    const tdAdd=document.createElement('td');
+    const addInput=document.createElement('input'); addInput.type='number'; addInput.min=0; addInput.value=0; addInput.classList.add('num-input'); tdAdd.appendChild(addInput);
+
+    const tdSub=document.createElement('td');
+    const subInput=document.createElement('input'); subInput.type='number'; subInput.min=0; subInput.value=0; subInput.classList.add('num-input'); tdSub.appendChild(subInput);
+
+    const tdResult=document.createElement('td'); tdResult.textContent=item.stock;
+
+    const tdAction=document.createElement('td');
+    if(currentUserRole==='admin'){
+      const editBtn=document.createElement('button'); editBtn.textContent='Edit'; editBtn.classList.add('edit-btn');
+      editBtn.addEventListener('click',()=>editItemName(item.key,item.name));
+      tdAction.appendChild(editBtn);
+
+      const deleteBtn=document.createElement('button'); deleteBtn.textContent='Delete'; deleteBtn.classList.add('delete-btn');
+      deleteBtn.addEventListener('click',()=>deleteItem(item.key));
+      tdAction.appendChild(deleteBtn);
+    }
+
+    addInput.addEventListener('input',()=>updateStock(item.key,Number(addInput.value),Number(subInput.value),tdResult));
+    subInput.addEventListener('input',()=>updateStock(item.key,Number(addInput.value),Number(subInput.value),tdResult));
+
+    tr.appendChild(tdNo); tr.appendChild(tdName); tr.appendChild(tdStock);
+    tr.appendChild(tdAdd); tr.appendChild(tdSub); tr.appendChild(tdResult); tr.appendChild(tdAction);
+    itemsTable.appendChild(tr);
+  });
+}
+
+// --- UPDATE STOCK ---
+function updateStock(key, masuk, keluar, tdResult){
+  const itemRef=db.ref('items/'+key+'/stock');
+  itemRef.transaction(val=>{
+    let newStock=(val||0)+masuk-keluar;
+    if(newStock<0) newStock=0;
+    tdResult.textContent=newStock;
+    return newStock;
+  });
+}
+
+// --- EDIT & DELETE ITEM ---
+function editItemName(key,oldName){
+  const newName=prompt('Nama baru:',oldName);
+  if(!newName || newName===oldName) return;
+  db.ref('items/'+key).update({name:newName});
+}
+function deleteItem(key){ if(confirm('Delete this item?')) db.ref('items/'+key).remove(); }
+
+// --- ADD ITEM ---
+addItemBtn.addEventListener('click',()=>{
+  if(currentUserRole!=='admin'){alert('Hanya admin yang bisa tambah barang'); return;}
+  const name=prompt('Nama barang baru:').trim();
+  if(!name){alert('Nama kosong'); return;}
+  const stock=parseInt(prompt('Stok awal:'),10);
+  if(isNaN(stock)){alert('Stok awal harus angka'); return;}
+  const newKey=db.ref('items').push().key;
+  db.ref('items/'+newKey).set({name:name,stock:stock});
+});
+
+// --- SEARCH & SORT ---
+searchInput.addEventListener('input',renderItems);
+sortAscBtn.addEventListener('click',()=>{itemsData.sort((a,b)=>a.name.localeCompare(b.name)); renderItems();});
+sortDescBtn.addEventListener('click',()=>{itemsData.sort((a,b)=>b.name.localeCompare(a.name)); renderItems();});
+
+// --- ADMIN LOGO ---
+function setupAdminLogo(){
+  if(currentUserRole!=='admin') return;
+  appLogo.addEventListener('click',()=>fileLogo.click());
+  fileLogo.addEventListener('change',()=>{
+    const file=fileLogo.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=e=>{
+      appLogo.src=e.target.result;
+      db.ref('app/logo').set(e.target.result); // simpan di firebase
+    };
+    reader.readAsDataURL(file);
+  });
+  // load logo jika sudah ada
+  db.ref('app/logo').once('value',snap=>{
+    if(snap.exists()) appLogo.src=snap.val();
+  });
+}
+
+// --- EXPORT EXCEL ---
+exportBtn.addEventListener('click',()=>{
+  const ws=XLSX.utils.json_to_sheet(itemsData.map((i,index)=>({
+    No: index+1,
+    Nama_Barang:i.name,
+    Stok:i.stock
+  })));
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Items');
+  XLSX.writeFile(wb,'items.xlsx');
+});
+
+// --- IMPORT EXCEL/CSV ---
+importBtn.addEventListener('click',()=>{
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.xlsx,.csv';
+  inp.onchange=e=>{
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=e=>{
+      let data;
+      try{
+        data=XLSX.read(e.target.result,{type:'binary'});
+      }catch(err){
+        alert('Gagal membaca file'); return;
+      }
+      const sheetName=data.SheetNames[0];
+      const sheet=XLSX.utils.sheet_to_json(data.Sheets[sheetName],{defval:''});
+      sheet.forEach(row=>{
+        const name=row['Nama']||row['Nama Barang']||row['name']||('item_'+Math.random().toString(36).substring(7));
+        const stock=parseInt(row['Stok Awal']||row['Stock']||row['stock']||0,10);
+        if(!name) return;
+        const newKey=db.ref('items').push().key;
+        db.ref('items/'+newKey).set({name:name,stock:stock});
+      });
+    };
+    reader.readAsBinaryString(file);
+  };
+  inp.click();
+});
+
+// --- DELETE ALL ---
+deleteAllBtn.addEventListener('click',()=>{ if(confirm('Delete All Items?')) db.ref('items').remove(); });
+
+</script>
+</body>
+</html>
